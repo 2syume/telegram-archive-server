@@ -52,7 +52,7 @@ export class BotService {
       this.bot.on('edit', this.botOnMessage)
     }
 
-    this.bot.command('search', this.botOnSearchCommand)
+    // this.bot.command('search', this.botOnSearchCommand)
   }
 
   async start() {
