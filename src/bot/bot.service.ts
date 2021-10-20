@@ -1,13 +1,18 @@
-import { Inject, Injectable } from '@nestjs/common'
+import { CACHE_MANAGER, Inject, Injectable } from '@nestjs/common'
 import { ConfigType } from '@nestjs/config'
-import { Bot, Context, GrammyError, NextFunction } from 'grammy'
+import { Bot, Context, NextFunction } from 'grammy'
 import botConfig from '../config/bot.config'
-import { MeiliSearchService } from '../search/meili-search.service'
+import {
+  MeiliSearchService,
+  MessageIndex,
+} from '../search/meili-search.service'
 import httpConfig from '../config/http.config'
-import { PhotoSize, Update } from '@grammyjs/types'
+import { PhotoSize, Update, MessageEntity } from '@grammyjs/types'
 import Debug = require('debug')
 import fetch from 'node-fetch'
 import createHttpsProxyAgent = require('https-proxy-agent')
+import { SearchResponse } from 'meilisearch'
+import { Cache } from 'cache-manager'
 
 const debug = Debug('app:bot:bot.service')
 
@@ -25,6 +30,7 @@ export class BotService {
     @Inject(httpConfig.KEY)
     httpCfg: ConfigType<typeof httpConfig>,
     private search: MeiliSearchService,
+    @Inject(CACHE_MANAGER) private cache: Cache,
   ) {
     this.useWebhook = botCfg.webhook
     this.baseUrl = `${httpCfg.baseUrl}${httpCfg.globalPrefix}`
@@ -52,7 +58,7 @@ export class BotService {
       this.bot.on('edit', this.botOnMessage)
     }
 
-    // this.bot.command('search', this.botOnSearchCommand)
+    this.bot.command('search', this.botOnSearchCommand)
   }
 
   async start() {
@@ -98,10 +104,23 @@ export class BotService {
     if (!chat || !msg || !from) {
       return
     }
+
+    if (from.username) {
+      await this.cache.set<number>(from.username, from.id, {
+        ttl: 60 * 60 * 24 * 365,
+      })
+      debug(`Cached user ${from.username} with id ${from.id}`)
+    }
+
     const realId = `${chat.id}`.replace(/^-100/, '')
     const chatId = `${chat.type}${realId}`
+
+    if (chat.type !== 'supergroup') {
+      return
+    }
+
     const searchable = msg?.text || msg?.caption
-    if (!searchable) {
+    if (!searchable || searchable.startsWith('/')) {
       return
     }
 
@@ -116,53 +135,60 @@ export class BotService {
       from: 'bot',
       timestamp: msg.date * 1000,
     })
+
+    debug(
+      `Receive message from ${joinNames(
+        from.first_name,
+        from.last_name,
+      )}: ${searchable}`,
+    )
   }
 
   private botOnSearchCommand = async (ctx: Context) => {
-    const { msg, chat, from } = ctx
-    if (!chat || !msg || !from) {
+    const { msg, chat, from, match } = ctx
+    if (!chat || !msg || !from || !match || typeof match !== 'string') {
       return
     }
-
-    if (chat.type === 'private') {
-      await ctx.reply('？')
-      return
-    }
-
     const realId = `${chat.id}`.replace(/^-100/, '')
     const chatId = `${chat.type}${realId}`
-    const authUrl = new URL(this.baseUrl + '/user/auth/viaTelegram')
-    authUrl.searchParams.append('chatId', chatId)
 
-    try {
-      await ctx.reply('🔍群内消息搜索试运行中，有问题请点我头像', {
-        reply_markup: {
-          inline_keyboard: [
-            [
-              {
-                text: '搜索',
-                login_url: {
-                  url: authUrl.toString(),
-                  request_write_access: true,
-                },
-              },
-            ],
-          ],
-        },
-      })
-    } catch (e: any) {
-      if (
-        e instanceof GrammyError &&
-        (e.description.includes('login URL is invalid') ||
-          e.description.includes('BOT_DOMAIN_INVALID'))
-      ) {
-        await ctx.reply(
-          `当前无法使用登录，请联系 @BotFather 在 Settings / Domain 处将域名修改为 <code>${authUrl.hostname}</code>`,
-          { parse_mode: 'HTML' },
-        )
+    let searchResults: SearchResponse<MessageIndex>
+    if (chat.type === 'private') {
+      searchResults = await this.search.search(
+        match,
+        undefined,
+        `user${from.id}`,
+      )
+    } else {
+      const mentionUserId = await this.getMentionUserId(ctx)
+      if (!mentionUserId) {
+        searchResults = await this.search.search(match, chatId)
       } else {
-        throw e
+        searchResults = await this.search.search(
+          match,
+          chatId,
+          `user${mentionUserId}`,
+        )
       }
+    }
+
+    let formattedMessage = searchResults.hits
+      .map((hit: any) => {
+        const tgUrlChatId = hit.chatId.replace(/[a-zA-Z]+/, '')
+        return `*${hit.fromName}*：${hit.text} [跳转](https://t.me/c/${tgUrlChatId}/${hit.messageId})`
+      })
+      .join('\n')
+
+    if (formattedMessage !== '') {
+      formattedMessage = `搜索结果：\n${formattedMessage}`
+      await ctx.reply(formattedMessage, {
+        parse_mode: 'Markdown',
+        reply_to_message_id: msg.message_id,
+      })
+    } else {
+      await ctx.reply('没有找到相关信息', {
+        reply_to_message_id: msg.message_id,
+      })
     }
   }
 
@@ -176,6 +202,36 @@ export class BotService {
         return { photos: [] }
       } else {
         throw e
+      }
+    }
+  }
+
+  private async getMentionUserId(ctx: Context) {
+    const { msg } = ctx
+    if (!msg || !msg.text) {
+      return undefined
+    }
+
+    const textMention = msg.entities?.find(
+      (entity) => entity.type === 'text_mention',
+    ) as MessageEntity.TextMentionMessageEntity
+    if (textMention) {
+      debug(`Mentioned user ${textMention.user.id}`)
+      return textMention.user.id
+    }
+
+    const mention = msg.entities?.find(
+      (entity) => entity.type === 'mention',
+    ) as MessageEntity.CommonMessageEntity
+    if (mention) {
+      const mentionUserString = msg.text.substring(
+        mention.offset + 1,
+        mention.offset + mention.length,
+      )
+      const mentionUserId = await this.cache.get<number>(mentionUserString)
+      if (mentionUserId) {
+        debug(`Mentioned user ${mentionUserId}`)
+        return mentionUserId
       }
     }
   }

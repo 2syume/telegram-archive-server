@@ -70,7 +70,9 @@ export class MeiliSearchService implements OnModuleDestroy {
 
   async writeToCache() {
     debug(`writing cache (${this.messagesQueue.length} items)`)
-    await this.cache.set(MESSAGES_QUEUE_KEY, this.messagesQueue, { ttl: 0 })
+    await this.cache.set(MESSAGES_QUEUE_KEY, this.messagesQueue, {
+      ttl: 60 * 60 * 24 * 365,
+    })
   }
 
   async importAllQueued() {
@@ -150,11 +152,11 @@ export class MeiliSearchService implements OnModuleDestroy {
     await this.messagesIndex.addDocuments(messages)
   }
 
-  async search(query: string, chatId: string, fromId?: number) {
+  async search(query: string, chatId?: string, fromId?: string) {
     const result = await this.messagesIndex.search<MessageIndex>(query, {
       filter: [
-        `chatId = ${chatId}`,
-        ...[fromId == null ? [] : [`fromId = ${fromId}`]],
+        ...[!chatId ? [] : [`chatId = ${chatId}`]],
+        ...[!fromId ? [] : [`fromId = ${fromId}`]],
       ],
     })
     return result
