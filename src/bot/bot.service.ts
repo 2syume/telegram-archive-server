@@ -204,7 +204,11 @@ export class BotService {
     let formattedMessage = searchResults.hits
       .map((hit: any) => {
         const tgUrlChatId = hit.chatId.replace(/[a-zA-Z]+/, '')
-        return `*${hit.fromName}*：${hit.text} [跳转](https://t.me/c/${tgUrlChatId}/${hit.messageId})`
+        let text = hit.text.replace(/\n/g, ' ').replace(/@/g, '')
+        if (text.length > 30) {
+          text = text.substring(0, 30) + '...'
+        }
+        return `*${hit.fromName}*：${text} [跳转](https://t.me/c/${tgUrlChatId}/${hit.messageId})`
       })
       .join('\n')
 
