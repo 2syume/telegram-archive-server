@@ -1,10 +1,10 @@
-import { CACHE_MANAGER, Inject, Injectable } from '@nestjs/common'
+import { Inject, Injectable } from '@nestjs/common'
 import { ConfigType } from '@nestjs/config'
 import { Bot, Context, NextFunction } from 'grammy'
 import botConfig from '../config/bot.config'
 import {
   MeiliSearchService,
-  MessageIndex,
+  OptionalTextMessageIndex,
 } from '../search/meili-search.service'
 import httpConfig from '../config/http.config'
 import { PhotoSize, Update, MessageEntity } from '@grammyjs/types'
@@ -12,7 +12,8 @@ import Debug = require('debug')
 import fetch from 'node-fetch'
 import createHttpsProxyAgent = require('https-proxy-agent')
 import { SearchResponse } from 'meilisearch'
-import { Cache } from 'cache-manager'
+import { IndexService } from 'src/search/index.service'
+import { ImageIndexService } from 'src/search/image-index.service'
 
 const debug = Debug('app:bot:bot.service')
 
@@ -23,18 +24,21 @@ export class BotService {
   private baseUrl: string
   private updateToken: string
   private agent: any
+  private userMap: Map<string, number>
 
-  constructor(
+  public constructor(
     @Inject(botConfig.KEY)
     botCfg: ConfigType<typeof botConfig>,
     @Inject(httpConfig.KEY)
     httpCfg: ConfigType<typeof httpConfig>,
     private search: MeiliSearchService,
-    @Inject(CACHE_MANAGER) private cache: Cache,
+    private index: IndexService,
+    private imageIndex: ImageIndexService,
   ) {
     this.useWebhook = botCfg.webhook
     this.baseUrl = `${httpCfg.baseUrl}${httpCfg.globalPrefix}`
     this.updateToken = botCfg.updateToken || botCfg.token
+    this.userMap = new Map<string, number>()
 
     if (this.useWebhook && !this.baseUrl) {
       throw new Error(
@@ -61,7 +65,7 @@ export class BotService {
     this.bot.command('search', this.botOnSearchCommand)
   }
 
-  async start() {
+  public async start() {
     if (this.useWebhook) {
       await this.bot.init()
       return this.setWebhookUrl()
@@ -90,6 +94,10 @@ export class BotService {
     }
 
     const { file_id: fileId } = getSmallestPhoto(photos[0])
+    return await this.fetchFile(fileId)
+  }
+
+  private async fetchFile(fileId: string) {
     const { file_path: filePath } = await this.bot.api.getFile(fileId)
     const fileUrl = `https://api.telegram.org/file/bot${this.bot.token}/${filePath}`
 
@@ -106,9 +114,7 @@ export class BotService {
     }
 
     if (from.username) {
-      await this.cache.set<number>(from.username, from.id, {
-        ttl: 60 * 60 * 24 * 365,
-      })
+      this.userMap.set(from.username, from.id)
       debug(`Cached user ${from.username} with id ${from.id}`)
     }
 
@@ -124,7 +130,7 @@ export class BotService {
       return
     }
 
-    await this.search.queueMessage({
+    const baseMessage: OptionalTextMessageIndex = {
       id: `${chatId}__${msg.message_id}`,
       messageId: msg.message_id,
       chatId,
@@ -134,14 +140,37 @@ export class BotService {
       raw: ctx.msg,
       from: 'bot',
       timestamp: msg.date * 1000,
-    })
+    }
 
-    debug(
-      `Receive message from ${joinNames(
-        from.first_name,
-        from.last_name,
-      )}: ${searchable}`,
-    )
+    if (searchable) {
+      await this.index.queueMessage({
+        ...baseMessage,
+        text: searchable,
+      })
+
+      debug(
+        `Receive message from ${joinNames(
+          from.first_name,
+          from.last_name,
+        )}: ${searchable}`,
+      )
+    }
+
+    if (msg?.photo?.length) {
+      await this.handlePhoto(msg.photo, baseMessage)
+
+      debug(`Receive photo from ${joinNames(from.first_name, from.last_name)}`)
+    }
+  }
+
+  private async handlePhoto(
+    photoSize: PhotoSize[],
+    baseMessage: OptionalTextMessageIndex,
+  ) {
+    const { file_id: fileId } = getLargestPhoto(photoSize)
+    const res = await this.fetchFile(fileId)
+    const buf = await res.buffer()
+    await this.imageIndex.indexImage([buf], baseMessage)
   }
 
   private botOnSearchCommand = async (ctx: Context) => {
@@ -152,7 +181,7 @@ export class BotService {
     const realId = `${chat.id}`.replace(/^-100/, '')
     const chatId = `${chat.type}${realId}`
 
-    let searchResults: SearchResponse<MessageIndex>
+    let searchResults: SearchResponse<OptionalTextMessageIndex>
     if (chat.type === 'private') {
       searchResults = await this.search.search(
         match,
@@ -228,7 +257,7 @@ export class BotService {
         mention.offset + 1,
         mention.offset + mention.length,
       )
-      const mentionUserId = await this.cache.get<number>(mentionUserString)
+      const mentionUserId = this.userMap.get(mentionUserString)
       if (mentionUserId) {
         debug(`Mentioned user ${mentionUserId}`)
         return mentionUserId
@@ -269,5 +298,10 @@ function getProxyAgent() {
 
 function getSmallestPhoto(photos: PhotoSize[]): PhotoSize {
   const sorted = photos.sort((a, b) => a.width - b.width)
+  return sorted[0]
+}
+
+function getLargestPhoto(photos: PhotoSize[]): PhotoSize {
+  const sorted = photos.sort((a, b) => b.width - a.width)
   return sorted[0]
 }

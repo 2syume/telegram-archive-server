@@ -1,6 +1,6 @@
 {
   "name": "telegram-archive-server",
-  "version": "0.1.1",
+  "version": "0.2.1",
   "description": "",
   "author": "",
   "private": true,
@@ -21,12 +21,14 @@
     "test:e2e": "jest --config ./test/jest-e2e.json"
   },
   "dependencies": {
+    "@google-cloud/vision": "^2.4.0",
     "@nestjs/common": "^8.0.0",
     "@nestjs/config": "^1.0.2",
     "@nestjs/core": "^8.0.0",
     "@nestjs/platform-express": "^8.0.0",
     "@nestjs/platform-fastify": "^8.0.11",
     "@nestjs/serve-static": "^2.2.2",
+    "bullmq": "^1.50.5",
     "cache-manager": "^3.4.4",
     "cache-manager-ioredis": "^2.1.0",
     "debug": "^4.3.2",

@@ -1,13 +1,7 @@
-import {
-  CACHE_MANAGER,
-  Inject,
-  Injectable,
-  OnModuleDestroy,
-} from '@nestjs/common'
+import { Inject, Injectable } from '@nestjs/common'
 import { ConfigType } from '@nestjs/config'
 import meilisearchConfig from '../config/meilisearch.config'
 import { Index, MeiliSearch, Settings } from 'meilisearch'
-import { Cache } from 'cache-manager'
 import Debug from 'debug'
 import deepEqual = require('deep-equal')
 
@@ -24,74 +18,31 @@ export type MessageIndex = {
   raw: any
   from: 'import' | 'bot'
   timestamp: number
+  ocr?: any
 }
 
-const MESSAGES_QUEUE_KEY = 'messages'
-const INSERT_BATCH = 100
-const INSERT_TIMEOUT = 60 * 1000
+export type OptionalTextMessageIndex = Omit<MessageIndex, 'text'> & {
+  text: string | undefined
+}
 
 @Injectable()
-export class MeiliSearchService implements OnModuleDestroy {
+export class MeiliSearchService {
   private client: MeiliSearch
   private indexPrefix: string
   private messagesIndex: Index<MessageIndex>
-  private messagesQueue: MessageIndex[]
-  private queueTimer: any
 
-  constructor(
+  public constructor(
     @Inject(meilisearchConfig.KEY)
     msConfig: ConfigType<typeof meilisearchConfig>,
-    @Inject(CACHE_MANAGER) private cache: Cache,
   ) {
     this.client = new MeiliSearch(msConfig)
     this.indexPrefix = msConfig.indexPrefix
     this.messagesIndex = this.client.index<MessageIndex>(
       `${this.indexPrefix}messages`,
     )
-    this.messagesQueue = []
   }
 
-  async onModuleDestroy() {
-    debug('app exiting, writing queue to cache')
-    // await this.writeToCache()
-    await this.importAllQueued()
-  }
-
-  async recoverFromCache() {
-    const queue = await this.cache.get<MessageIndex[]>(MESSAGES_QUEUE_KEY)
-    if (queue && Array.isArray(queue)) {
-      this.messagesQueue = queue.concat(this.messagesQueue)
-    }
-    if (this.messagesQueue.length > 0) {
-      debug(`${this.messagesQueue.length} items recovered from cache`)
-      await this.importAllQueued()
-    }
-  }
-
-  async writeToCache() {
-    debug(`writing cache (${this.messagesQueue.length} items)`)
-    await this.cache.set(MESSAGES_QUEUE_KEY, this.messagesQueue, {
-      ttl: 60 * 60 * 24 * 365,
-    })
-  }
-
-  async importAllQueued() {
-    if (this.messagesQueue.length < 1) {
-      return
-    }
-    debug('importing all queued message')
-    const queue = this.messagesQueue
-    this.messagesQueue = []
-    try {
-      await this.importMessages(queue)
-    } catch (e) {
-      this.messagesQueue = queue.concat(this.messagesQueue)
-      throw e
-    }
-    await this.writeToCache()
-  }
-
-  async migrate(): Promise<void> {
+  public async migrate(): Promise<void> {
     const settings: Settings = {
       searchableAttributes: ['text'],
       filterableAttributes: ['chatId', 'fromId', 'timestamp'],
@@ -129,30 +80,11 @@ export class MeiliSearchService implements OnModuleDestroy {
     }
   }
 
-  queueMessage(message: MessageIndex) {
-    debug('adding message to queue')
-    this.messagesQueue.push(message)
-
-    this.writeToCache().catch(console.error)
-
-    this.queueTimer && clearTimeout(this.queueTimer)
-
-    if (this.messagesQueue.length >= INSERT_BATCH) {
-      debug('message batch reached')
-      this.importAllQueued().catch(console.error)
-    } else {
-      this.queueTimer = setTimeout(() => {
-        debug('insert timeout reached')
-        this.importAllQueued().catch(console.error)
-      }, INSERT_TIMEOUT)
-    }
-  }
-
-  async importMessages(messages: MessageIndex[]): Promise<void> {
+  public async importMessages(messages: MessageIndex[]): Promise<void> {
     await this.messagesIndex.addDocuments(messages)
   }
 
-  async search(query: string, chatId?: string, fromId?: string) {
+  public async search(query: string, chatId?: string, fromId?: string) {
     const result = await this.messagesIndex.search<MessageIndex>(query, {
       filter: [
         ...[!chatId ? [] : [`chatId = ${chatId}`]],
@@ -162,7 +94,7 @@ export class MeiliSearchService implements OnModuleDestroy {
     return result
   }
 
-  getMessagesIndex() {
+  public getMessagesIndex() {
     return this.messagesIndex
   }
 }
