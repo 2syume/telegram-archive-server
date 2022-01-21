@@ -206,7 +206,7 @@ export class BotService {
         const tgUrlChatId = hit.chatId.replace(/[a-zA-Z]+/, '')
         let text = hit.text.replace(/\n/g, ' ').replace(/@/g, '')
         if (text.length > 30) {
-          text = text.substring(0, 30) + '...'
+          text = [...text].slice(0, 30).join('') + '...'
         }
         return `*${hit.fromName}*：${text} [跳转](https://t.me/c/${tgUrlChatId}/${hit.messageId})`
       })
