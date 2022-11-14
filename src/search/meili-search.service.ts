@@ -91,6 +91,8 @@ export class MeiliSearchService {
         ...[!fromId ? [] : [`fromId = ${fromId}`]],
       ],
     })
+
+    debug(`Query ${query} with chatId ${chatId} and ${fromId}:`, result)
     return result
   }
 
