@@ -173,6 +173,15 @@ export class BotService {
     await this.imageIndex.indexImage([buf], baseMessage)
   }
 
+  private escapeHtml = (unsafe: string) => {
+    return unsafe
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;')
+  }
+
   private botOnSearchCommand = async (ctx: Context) => {
     const { msg, chat, from, match } = ctx
     if (!chat || !msg || !from || !match || typeof match !== 'string') {
@@ -208,14 +217,16 @@ export class BotService {
         if (text.length > 30) {
           text = [...text].slice(0, 30).join('') + '...'
         }
-        return `*${hit.fromName}*：${text} [跳转](https://t.me/c/${tgUrlChatId}/${hit.messageId})`
+        return `<b>${this.escapeHtml(hit.fromName)}</b>：${this.escapeHtml(
+          text,
+        )} <a href="https://t.me/c/${tgUrlChatId}/${hit.messageId}">跳转</a>`
       })
       .join('\n')
 
     if (formattedMessage !== '') {
       formattedMessage = `搜索结果：\n${formattedMessage}`
       await ctx.reply(formattedMessage, {
-        parse_mode: 'Markdown',
+        parse_mode: 'HTML',
         reply_to_message_id: msg.message_id,
       })
     } else {
