@@ -62,8 +62,8 @@ export class BotService {
       this.bot.on('edit', this.botOnMessage)
     }
 
-    // this.bot.command('search', this.botOnSearchCommand)
-    // this.bot.command('flush', this.botOnFlushCommand)
+    this.bot.command('search', this.botOnSearchCommand)
+    this.bot.command('flush', this.botOnFlushCommand)
   }
 
   public async start() {
