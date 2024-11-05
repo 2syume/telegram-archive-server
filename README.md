@@ -36,7 +36,7 @@
 你需要：
 
 - 一个 Bot 帐号，事先获取它的 token
-- 一个公网可及的 https 服务器，如果不用 WebHook 的话 http 也行
+- 一个公网可及的 https 服务器，一定要有 https
 - 一个**超级群**，目前只支持超级群
 - 一个 MeiliSearch 实例，配不配置 key 都行
 - 一个 Redis 实例，没有也行，就是可能异常重启会丢消息
@@ -48,6 +48,10 @@
 你可以将它保存为 `.env` ，或是作为环境变量配置。
 
 ### 运行
+
+#### HTTPS
+
+TAS 并不提供内建的 https 服务，建议使用 Caddy 或类似软件反向代理 TAS。
 
 #### With Docker
 
@@ -62,7 +66,7 @@ docker run -d --restart=always --env-file=.env quay.io/oott123/telegram-archive-
 如果没有 Docker 或者不想用 Docker，也可以从源码编译部署。此时你还需要：
 
 - git
-- node 14
+- node 18
 
 ```bash
 git clone https://github.com/oott123/telegram-archive-server.git
@@ -110,11 +114,11 @@ yarn start
 curl \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $AUTH_IMPORT_TOKEN" \
-  --data @result.json \
+  -XPOST -T result.json \
   http://localhost:3100/api/v1/import/fromTelegramGroupExport
 ```
 
-即可导入记录。注意只能导入单个群的记录。
+即可导入记录。注意一次只能导入单个群的记录。
 
 ### OCR 识别文字(TBD)
 
@@ -138,6 +142,25 @@ curl \
 OCR_DRIVER=google
 OCR_ENDPOINT=eu-vision.googleapis.com # 或者 us-vision.googleapis.com ，决定 Google 在何处存储处理数据
 GOOGLE_APPLICATION_CREDENTIALS=/path/to/google/credentials.json # 从 GCP 后台下载的 json 鉴权文件
+```
+
+##### PaddleOCR
+
+你需要一个 [paddleocr-web](https://github.com/lilydjwg/paddleocr-web) 实例。配置如下：
+
+```bash
+OCR_DRIVER=paddle-ocr-web
+OCR_ENDPOINT=http://127.0.0.1:8980/api
+```
+
+##### Azure OCR
+
+创建一个 [Azure Vision](https://portal.azure.com/#create/Microsoft.CognitiveServicesComputerVision) 资源，并将资源信息配置如下：
+
+```bash
+OCR_DRIVER=azure
+OCR_ENDPOINT=https://tas.cognitiveservices.azure.com
+OCR_CREDENTIALS=000000000000000000000000000000000
 ```
 
 #### 启动不同角色

@@ -63,7 +63,18 @@ export class MeiliSearchService {
       'timestamp:desc',
     ]
 
-    await this.client.getOrCreateIndex(this.messagesIndex.uid)
+    try {
+      const index = await this.client.getIndex(this.messagesIndex.uid)
+      if (index.primaryKey == null) {
+        await this.client.updateIndex(this.messagesIndex.uid, {
+          primaryKey: 'id',
+        })
+      }
+    } catch (e) {
+      await this.client.createIndex(this.messagesIndex.uid, {
+        primaryKey: 'id',
+      })
+    }
     await this.messagesIndex.fetchInfo()
 
     const currentSettings = await this.messagesIndex.getSettings()
@@ -81,6 +92,7 @@ export class MeiliSearchService {
   }
 
   public async importMessages(messages: MessageIndex[]): Promise<void> {
+    debug('importing messages', messages)
     await this.messagesIndex.addDocuments(messages)
   }
 

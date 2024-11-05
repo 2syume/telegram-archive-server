@@ -62,7 +62,8 @@ export class BotService {
       this.bot.on('edit', this.botOnMessage)
     }
 
-    this.bot.command('search', this.botOnSearchCommand)
+    // this.bot.command('search', this.botOnSearchCommand)
+    // this.bot.command('flush', this.botOnFlushCommand)
   }
 
   public async start() {
@@ -180,6 +181,18 @@ export class BotService {
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;')
       .replace(/'/g, '&#039;')
+  }
+
+  private botOnFlushCommand = async (ctx: Context) => {
+    const { chat } = ctx
+
+    if (chat?.type === 'private') {
+      await ctx.reply('？')
+      return
+    }
+
+    await this.index.importAllQueued()
+    await ctx.reply('🧽')
   }
 
   private botOnSearchCommand = async (ctx: Context) => {
